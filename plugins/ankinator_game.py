@@ -1,10 +1,12 @@
+# plugins/ankinator_game.py
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from datetime import datetime
+import asyncio
+import random
+from utils.image_fetch import fetch_image_url  # your utility to fetch image from Google
 from config import MONGO_DB_URI
 import motor.motor_asyncio
-import asyncio
-from utils.image_fetch import fetch_image_url  # optional for image
 
 # MongoDB setup
 mongo = motor.motor_asyncio.AsyncIOMotorClient(MONGO_DB_URI)
@@ -12,10 +14,11 @@ db = mongo["tnc_db"]
 stats = db["user_stats"]
 
 # Track active games
-active_games = {}  # user_id : game_state dict
+active_games = {}  # user_id : game_state
+
 
 # ------------------------------
-# Update stats
+# Helper: Update stats
 # ------------------------------
 async def update_user_stats(user_id: int, won: bool):
     today = datetime.utcnow().strftime('%Y-%m-%d')
@@ -40,35 +43,48 @@ async def update_user_stats(user_id: int, won: bool):
         user['losses'] += 1
     await stats.update_one({'user_id': user_id}, {'$set': user}, upsert=True)
 
-# ------------------------------
-# Fake questions
-# ------------------------------
-FAKE_QUESTIONS = [
-    "Is your character real?",
-    "Is your character from a movie?",
-    "Is your character a superhero?",
-    "Is your character male?",
-    "Is your character animated?",
-]
-
-FAKE_GUESS = {
-    "name": "Iron Man",
-    "description": "Marvel superhero played by Robert Downey Jr."
-}
 
 # ------------------------------
-# Start game
+# Start fake Akinator game
 # ------------------------------
 async def start_akinator_game(client: Client, message, user_id: int):
-    active_games[user_id] = {"step": 0, "won": False}
+    if user_id in active_games:
+        await message.reply_text("❌ You already have an active game!")
+        return
+
+    # Fake game state
+    game_state = {
+        "questions": [
+            "Is your character real?",
+            "Is your character male?",
+            "Is your character from a movie?",
+            "Is your character animated?",
+            "Is your character a superhero?"
+        ],
+        "current": 0,
+        "progression": 0,
+        "guess": {"name": "Iron Man", "description": "Marvel superhero played by Robert Downey Jr."}
+    }
+    active_games[user_id] = game_state
+
+    q_text = game_state["questions"][game_state["current"]]
     await message.reply_text(
-        f"❓ {FAKE_QUESTIONS[0]}",
+        f"🧞‍♂️ Game started! Think of a character, person, or object.\n\n❓ {q_text}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
-             InlineKeyboardButton("❌ No", callback_data="ans_no")],
-            [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
+            [
+                InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
+                InlineKeyboardButton("❌ No", callback_data="ans_no")
+            ],
+            [
+                InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
+                InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
+            ],
+            [
+                InlineKeyboardButton("🛑 Stop", callback_data="stop_game")
+            ]
         ])
     )
+
 
 # ------------------------------
 # Handle answers
@@ -79,38 +95,63 @@ async def answer_handler(client: Client, query: CallbackQuery):
     if user_id not in active_games:
         return await query.answer("❌ You don't have an active game.", show_alert=True)
 
-    game = active_games[user_id]
+    game_state = active_games[user_id]
 
     if query.data == "stop_game":
         del active_games[user_id]
         await query.message.edit_text("🛑 Game stopped. Use /play to start a new game.")
         return
 
-    game["step"] += 1
-    progression = game["step"] * 20
+    # Map buttons
+    mapping = {
+        "ans_yes": "yes",
+        "ans_no": "no",
+        "ans_probably": "probably",
+        "ans_dontknow": "idk"
+    }
+    answer = mapping.get(query.data)
 
-    if progression >= 100:
-        # Game ends, show guess
+    # Fake progression logic
+    game_state["current"] += 1
+    game_state["progression"] += random.randint(15, 25)
+
+    # Check if game finished
+    if game_state["progression"] >= 80 or game_state["current"] >= len(game_state["questions"]):
+        guess = game_state["guess"]
         del active_games[user_id]
+
+        # Update stats as win
         await update_user_stats(user_id, True)
+
+        # Fetch image
+        img_url = await fetch_image_url(guess["name"])
+
         text = (
-            f"🤯 I think it's **{FAKE_GUESS['name']}**!\n"
-            f"🧾 {FAKE_GUESS['description']}\n"
+            f"🤯 I think it's **{guess['name']}**!\n"
+            f"🧾 {guess['description']}\n"
             f"Was I right? (yes / no)"
         )
-        img_url = await fetch_image_url(FAKE_GUESS['name'])
+
         if img_url:
             await query.message.reply_photo(img_url, caption=text)
         else:
             await query.message.reply(text)
     else:
-        # Next fake question
-        next_q = FAKE_QUESTIONS[min(game["step"], len(FAKE_QUESTIONS)-1)]
+        # Next question
+        next_q = game_state["questions"][game_state["current"]]
         await query.message.edit_text(
             f"❓ {next_q}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
-                 InlineKeyboardButton("❌ No", callback_data="ans_no")],
-                [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
+                [
+                    InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
+                    InlineKeyboardButton("❌ No", callback_data="ans_no")
+                ],
+                [
+                    InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
+                    InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
+                ],
+                [
+                    InlineKeyboardButton("🛑 Stop", callback_data="stop_game")
+                ]
             ])
         )
