@@ -1,6 +1,6 @@
 pyrogram==2.0.106
 tgcrypto
-aiohttp
 motor
 python-dotenv
-akinator.py>=2.0.2
+aiohttp
+git+https://github.com/Damiandeboer/akinator.py.git
