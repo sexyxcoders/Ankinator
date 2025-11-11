@@ -5,8 +5,8 @@ from config import SUPPORT_CHAT, UPDATES_CHANNEL
 
 # You can add multiple start images
 START_IMAGES = [
-    "https://telegra.ph/file/ee8b25b05d54cbe13438a.jpg",
-    "https://telegra.ph/file/1f0ad8fbe1fdce07a9e38.jpg"
+    "https://files.catbox.moe/7euxdw.jpg",
+    "https://files.catbox.moe/a2dqet.jpg"
 ]
 
 @Client.on_message(filters.command(["start", "help"]))
