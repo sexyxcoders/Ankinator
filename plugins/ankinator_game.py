@@ -5,13 +5,18 @@ from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
 from utils.image_fetch import fetch_image_url
+import asyncio
 
+# ------------------------------
 # MongoDB setup
+# ------------------------------
 mongo = motor.motor_asyncio.AsyncIOMotorClient(MONGO_DB_URI)
 db = mongo["tnc_db"]
 stats = db["user_stats"]
 
+# ------------------------------
 # Active games tracker
+# ------------------------------
 active_games = {}  # user_id : Akinator instance
 
 # ------------------------------
@@ -41,6 +46,22 @@ async def update_user_stats(user_id: int, won: bool):
     await stats.update_one({'user_id': user_id}, {'$set': user}, upsert=True)
 
 # ------------------------------
+# Helper: Build answer buttons
+# ------------------------------
+def answer_buttons():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
+            InlineKeyboardButton("❌ No", callback_data="ans_no")
+        ],
+        [
+            InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
+            InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
+        ],
+        [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
+    ])
+
+# ------------------------------
 # Start the Akinator game
 # ------------------------------
 @Client.on_message(filters.command("play"))
@@ -49,28 +70,25 @@ async def start_akinator_game(client: Client, message):
     if user_id in active_games:
         return await message.reply_text("❌ You already have an active game.")
 
-    aki = akinator.Akinator()
+    # Create Akinator instance
+    aki = akinator.Akinator(language="en")
     active_games[user_id] = aki
 
-    try:
-        q = aki.start_game()
-    except Exception as e:
-        del active_games[user_id]
-        return await message.reply_text(f"⚠️ Failed to start game: {e}")
+    # Retry logic for start_game
+    for attempt in range(3):
+        try:
+            question = aki.start_game()
+            break
+        except Exception as e:
+            if attempt == 2:
+                del active_games[user_id]
+                return await message.reply_text(f"⚠️ Failed to start game: {e}")
+            else:
+                continue
 
     await message.reply_text(
-        f"❓ {q}",
-        reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
-                InlineKeyboardButton("❌ No", callback_data="ans_no")
-            ],
-            [
-                InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
-                InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
-            ],
-            [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
-        ])
+        f"❓ {question}",
+        reply_markup=answer_buttons()
     )
 
 # ------------------------------
@@ -97,25 +115,37 @@ async def answer_handler(client: Client, query: CallbackQuery):
     }
     ans = mapping.get(query.data)
 
+    # Answer the question
     try:
-        q = aki.answer(ans)
+        next_question = aki.answer(ans)
     except Exception as e:
         del active_games[user_id]
         await query.message.edit_text(f"⚠️ Game ended unexpectedly.\n\nError: {e}")
         return
 
+    # Check if Akinator is confident
     if aki.progression >= 80:
         try:
-            res = aki.win()
+            result = aki.win()
             del active_games[user_id]
 
             await update_user_stats(user_id, True)
 
-            img_url = await fetch_image_url(res['name'])
+            # Fetch dynamic image
+            img_url = await fetch_image_url(result['name'])
 
-            text = f"🤯 I think it's **{res['name']}**!\n🧾 {res['description']}\nWas I right? (yes / no)"
-            if img_url:
-                await query.message.reply_photo(img_url, caption=text)
+            text = (
+                f"🤯 I think it's **{result['name']}**!\n"
+                f"🧾 {result['description']}\n"
+                f"Was I right? (yes / no)"
+            )
+
+            # Safe image sending
+            if img_url and img_url.startswith(("http://", "https://")):
+                try:
+                    await query.message.reply_photo(img_url, caption=text)
+                except Exception:
+                    await query.message.reply(text + "\n⚠️ Could not send image.")
             else:
                 await query.message.reply(text)
 
@@ -123,17 +153,8 @@ async def answer_handler(client: Client, query: CallbackQuery):
             del active_games[user_id]
             await query.message.edit_text(f"⚠️ Error retrieving result: {e}")
     else:
+        # Ask next question
         await query.message.edit_text(
-            f"❓ {q}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
-                    InlineKeyboardButton("❌ No", callback_data="ans_no")
-                ],
-                [
-                    InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
-                    InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
-                ],
-                [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
-            ])
+            f"❓ {next_question}",
+            reply_markup=answer_buttons()
         )
