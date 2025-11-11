@@ -3,4 +3,4 @@ tgcrypto
 aiohttp
 motor
 python-dotenv
-git+https://github.com/Damiandeboer/akinator.py.git
+akinator.py
