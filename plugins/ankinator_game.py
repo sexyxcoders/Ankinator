@@ -1,22 +1,10 @@
-import os
-import aiohttp
-import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from akinator import Akinator, Language
 from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
 from utils.image_fetch import fetch_image_url
-
-# ------------------------------
-# Environment
-# ------------------------------
-AKI_API_KEY = os.getenv("AKINATOR_API_KEY")
-AKI_API_HOST = os.getenv("AKINATOR_API_HOST")
-HEADERS = {
-    "X-RapidAPI-Key": AKI_API_KEY,
-    "X-RapidAPI-Host": AKI_API_HOST
-}
 
 # ------------------------------
 # MongoDB setup
@@ -28,7 +16,7 @@ stats = db["user_stats"]
 # ------------------------------
 # Active games tracker
 # ------------------------------
-active_games = {}  # user_id : {game_id, step, session_data}
+active_games = {}  # user_id : Akinator instance
 
 # ------------------------------
 # Helper: Update stats
@@ -81,22 +69,21 @@ async def start_akinator_game(client: Client, message):
     if user_id in active_games:
         return await message.reply_text("❌ You already have an active game.")
 
-    async with aiohttp.ClientSession() as session:
+    aki = Akinator(language=Language.English)
+
+    # Retry logic for start_game
+    for _ in range(3):
         try:
-            async with session.get(f"https://{AKI_API_HOST}/start", headers=HEADERS) as resp:
-                data = await resp.json()
-        except Exception as e:
-            return await message.reply_text(f"⚠️ Failed to start game: {e}")
+            question = aki.start_game()
+            break
+        except Exception:
+            continue
+    else:
+        return await message.reply_text("⚠️ Failed to start game. Try again later.")
 
-    # Save active game
-    active_games[user_id] = {
-        "game_id": data["game_id"],
-        "step": data["step"],
-        "session_data": data
-    }
-
+    active_games[user_id] = aki
     await message.reply_text(
-        f"❓ {data['question']}",
+        f"❓ {question}",
         reply_markup=answer_buttons()
     )
 
@@ -109,52 +96,45 @@ async def answer_handler(client: Client, query: CallbackQuery):
     if user_id not in active_games:
         return await query.answer("❌ You don't have an active game.", show_alert=True)
 
-    game = active_games[user_id]
+    aki = active_games[user_id]
 
     if query.data == "stop_game":
         del active_games[user_id]
         await query.message.edit_text("🛑 Game stopped. Use /play to start a new game.")
         return
 
-    ans_map = {
-        "ans_yes": 0,
-        "ans_no": 1,
-        "ans_probably": 2,
-        "ans_dontknow": 3
+    mapping = {
+        "ans_yes": "yes",
+        "ans_no": "no",
+        "ans_probably": "probably",
+        "ans_dontknow": "idk"
     }
-    ans_value = ans_map.get(query.data)
+    ans = mapping.get(query.data)
 
-    async with aiohttp.ClientSession() as session:
+    try:
+        question = aki.answer(ans)
+    except Exception as e:
+        del active_games[user_id]
+        await query.message.edit_text(f"⚠️ Game ended unexpectedly.\n\nError: {e}")
+        return
+
+    # Check if Akinator is confident
+    if aki.progression >= 80:
         try:
-            async with session.get(
-                f"https://{AKI_API_HOST}/answer",
-                headers=HEADERS,
-                params={"game_id": game["game_id"], "answer": ans_value}
-            ) as resp:
-                data = await resp.json()
-        except Exception as e:
+            res = aki.win()
             del active_games[user_id]
-            return await query.message.edit_text(f"⚠️ Failed to answer: {e}")
 
-    # Update step
-    game["step"] = data["step"]
-
-    # Check progression
-    if data.get("progression", 0) >= 90:
-        try:
-            result = data["result"]
-            del active_games[user_id]
+            # Update stats as win
             await update_user_stats(user_id, True)
 
             # Fetch image safely
-            img_url = await fetch_image_url(result["name"])
+            img_url = await fetch_image_url(res['name'])
             text = (
-                f"🤯 I think it's **{result['name']}**!\n"
-                f"🧾 {result['description']}\n"
+                f"🤯 I think it's **{res['name']}**!\n"
+                f"🧾 {res['description']}\n"
                 f"Was I right? (yes / no)"
             )
-
-            if img_url and img_url.startswith(("http://", "https://")):
+            if img_url and img_url.startswith(("http://","https://")):
                 try:
                     await query.message.reply_photo(img_url, caption=text)
                 except:
@@ -164,9 +144,9 @@ async def answer_handler(client: Client, query: CallbackQuery):
 
         except Exception as e:
             del active_games[user_id]
-            await query.message.edit_text(f"⚠️ Failed to retrieve result: {e}")
+            await query.message.edit_text(f"⚠️ Error retrieving result: {e}")
     else:
         await query.message.edit_text(
-            f"❓ {data['question']}",
+            f"❓ {question}",
             reply_markup=answer_buttons()
         )
