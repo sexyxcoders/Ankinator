@@ -4,7 +4,7 @@
   "repository": "https://github.com/sexyxcoders/Ankinator",
   "logo": "https://raw.githubusercontent.com/yourusername/TNC/main/assets/welcome.jpg",
   "keywords": ["telegram", "bot", "akinator", "game"],
-  "stack": "heroku-20",
+  "stack": "heroku-24",
   "env": {
     "API_ID": {
       "description": "Telegram API ID from my.telegram.org",
