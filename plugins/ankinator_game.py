@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import akinator
+from akinator import Language
 from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
@@ -70,8 +71,8 @@ async def start_akinator_game(client: Client, message):
     if user_id in active_games:
         return await message.reply_text("❌ You already have an active game.")
 
-    # Create Akinator instance
-    aki = akinator.Akinator(language="en")
+    # Create Akinator instance with Language enum
+    aki = akinator.Akinator(language=Language.English)
     active_games[user_id] = aki
 
     # Retry logic for start_game
