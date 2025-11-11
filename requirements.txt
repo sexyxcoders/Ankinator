@@ -1,4 +1,4 @@
-akinator.py==2.0.2
+akinator.py
 pyrogram==2.0.106
 tgcrypto
 motor
