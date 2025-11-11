@@ -1,3 +1,4 @@
+# plugins/akinator_game.py
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from akinator.async_aki import Akinator
@@ -5,6 +6,7 @@ from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
 import asyncio
+from utils.image_fetch import fetch_image_url
 
 # MongoDB setup
 mongo = motor.motor_asyncio.AsyncIOMotorClient(MONGO_DB_URI)
@@ -103,18 +105,19 @@ async def answer_handler(client: Client, query: CallbackQuery):
             # Update stats as win
             await update_user_stats(user_id, True)
 
+            # Fetch dynamic image
+            img_url = await fetch_image_url(res['name'])
+
             # Send result with image
             text = (
                 f"🤯 I think it's **{res['name']}**!\n"
                 f"🧾 {res['description']}\n"
                 f"Was I right? (yes / no)"
             )
-            await query.message.edit_text(text)
-
-            # Send image
-            if res.get('absolute_picture_path') or res.get('image'):
-                img = res.get('absolute_picture_path') or res.get('image')
-                await query.message.reply_photo(img)
+            if img_url:
+                await query.message.reply_photo(img_url, caption=text)
+            else:
+                await query.message.reply(text)
 
         except Exception as e:
             del active_games[user_id]
