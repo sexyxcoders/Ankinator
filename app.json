@@ -1,7 +1,7 @@
 {
   "name": "TNC-Akinator-Bot",
   "description": "Telegram Akinator Game Bot with stats, leaderboards, and dynamic images",
-  "repository": "https://github.com/yourusername/TNC",
+  "repository": "https://github.com/sexyxcoders/Ankinator",
   "logo": "https://raw.githubusercontent.com/yourusername/TNC/main/assets/welcome.jpg",
   "keywords": ["telegram", "bot", "akinator", "game"],
   "stack": "heroku-20",
