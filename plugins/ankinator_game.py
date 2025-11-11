@@ -1,11 +1,9 @@
-# plugins/akinator_game.py
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from akinator.async_aki import Akinator
+import akinator
 from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
-import asyncio
 from utils.image_fetch import fetch_image_url
 
 # MongoDB setup
@@ -45,10 +43,21 @@ async def update_user_stats(user_id: int, won: bool):
 # ------------------------------
 # Start the Akinator game
 # ------------------------------
-async def start_akinator_game(client: Client, message, user_id: int):
-    aki = Akinator()
+@Client.on_message(filters.command("play"))
+async def start_akinator_game(client: Client, message):
+    user_id = message.from_user.id
+    if user_id in active_games:
+        return await message.reply_text("❌ You already have an active game.")
+
+    aki = akinator.Akinator()
     active_games[user_id] = aki
-    q = await aki.start_game()
+
+    try:
+        q = aki.start_game()
+    except Exception as e:
+        del active_games[user_id]
+        return await message.reply_text(f"⚠️ Failed to start game: {e}")
+
     await message.reply_text(
         f"❓ {q}",
         reply_markup=InlineKeyboardMarkup([
@@ -80,7 +89,6 @@ async def answer_handler(client: Client, query: CallbackQuery):
         await query.message.edit_text("🛑 Game stopped. Use /play to start a new game.")
         return
 
-    # Map buttons to Akinator answers
     mapping = {
         "ans_yes": "yes",
         "ans_no": "no",
@@ -90,30 +98,22 @@ async def answer_handler(client: Client, query: CallbackQuery):
     ans = mapping.get(query.data)
 
     try:
-        q = await aki.answer(ans)
+        q = aki.answer(ans)
     except Exception as e:
         del active_games[user_id]
         await query.message.edit_text(f"⚠️ Game ended unexpectedly.\n\nError: {e}")
         return
 
-    # If Akinator thinks it knows the answer
     if aki.progression >= 80:
         try:
-            res = await aki.win()
+            res = aki.win()
             del active_games[user_id]
 
-            # Update stats as win
             await update_user_stats(user_id, True)
 
-            # Fetch dynamic image
             img_url = await fetch_image_url(res['name'])
 
-            # Send result with image
-            text = (
-                f"🤯 I think it's **{res['name']}**!\n"
-                f"🧾 {res['description']}\n"
-                f"Was I right? (yes / no)"
-            )
+            text = f"🤯 I think it's **{res['name']}**!\n🧾 {res['description']}\nWas I right? (yes / no)"
             if img_url:
                 await query.message.reply_photo(img_url, caption=text)
             else:
@@ -123,7 +123,6 @@ async def answer_handler(client: Client, query: CallbackQuery):
             del active_games[user_id]
             await query.message.edit_text(f"⚠️ Error retrieving result: {e}")
     else:
-        # Ask next question
         await query.message.edit_text(
             f"❓ {q}",
             reply_markup=InlineKeyboardMarkup([
