@@ -1,0 +1,43 @@
+{
+  "name": "TNC-Akinator-Bot",
+  "description": "Telegram Akinator Game Bot with stats, leaderboards, and dynamic images",
+  "repository": "https://github.com/yourusername/TNC",
+  "logo": "https://raw.githubusercontent.com/yourusername/TNC/main/assets/welcome.jpg",
+  "keywords": ["telegram", "bot", "akinator", "game"],
+  "stack": "heroku-20",
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID from my.telegram.org",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash from my.telegram.org",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Bot token from @BotFather",
+      "required": true
+    },
+    "MONGO_DB_URI": {
+      "description": "MongoDB connection string",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Your Telegram ID for admin commands",
+      "required": true
+    },
+    "SUPPORT_CHAT": {
+      "description": "Link to support group",
+      "required": true,
+      "value": "https://t.me/TNCmeetups"
+    },
+    "UPDATES_CHANNEL": {
+      "description": "Link to updates channel",
+      "required": true,
+      "value": "https://t.me/TncNetwork"
+    }
+  },
+  "buildpacks": [
+    { "url": "heroku/python" }
+  ]
+}
