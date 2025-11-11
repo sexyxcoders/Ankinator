@@ -1,1 +1,6 @@
-python-3.10.12
+pyrogram==2.0.106
+tgcrypto
+aiohttp
+motor
+python-dotenv
+akinator.py
