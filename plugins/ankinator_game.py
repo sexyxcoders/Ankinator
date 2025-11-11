@@ -1,75 +1,68 @@
-# plugins/ankinator_game.py
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from datetime import datetime
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import aiohttp
 import asyncio
-import random
-from utils.image_fetch import fetch_image_url  # your utility to fetch image from Google
+from datetime import datetime
 from config import MONGO_DB_URI
 import motor.motor_asyncio
 
-# MongoDB setup
+# ------------------------------
+# MongoDB setup for stats
+# ------------------------------
 mongo = motor.motor_asyncio.AsyncIOMotorClient(MONGO_DB_URI)
 db = mongo["tnc_db"]
 stats = db["user_stats"]
 
-# Track active games
-active_games = {}  # user_id : game_state
-
+# ------------------------------
+# Active games tracker
+# ------------------------------
+active_games = {}  # user_id : session_id
 
 # ------------------------------
-# Helper: Update stats
+# Update user stats
 # ------------------------------
 async def update_user_stats(user_id: int, won: bool):
     today = datetime.utcnow().strftime('%Y-%m-%d')
     user = await stats.find_one({'user_id': user_id})
     if not user:
-        user = {
-            'user_id': user_id,
-            'total_games': 0,
-            'wins': 0,
-            'losses': 0,
-            'today_games': 0,
-            'today_date': today,
-        }
+        user = {'user_id': user_id, 'total_games': 0, 'wins': 0, 'losses': 0, 'today_games': 0, 'today_date': today}
+
     if user.get('today_date') != today:
         user['today_games'] = 0
         user['today_date'] = today
+
     user['total_games'] += 1
     user['today_games'] += 1
     if won:
         user['wins'] += 1
     else:
         user['losses'] += 1
+
     await stats.update_one({'user_id': user_id}, {'$set': user}, upsert=True)
 
-
 # ------------------------------
-# Start fake Akinator game
+# Start Akinator Game
 # ------------------------------
 async def start_akinator_game(client: Client, message, user_id: int):
     if user_id in active_games:
-        await message.reply_text("❌ You already have an active game!")
+        await message.reply("❌ You already have an active game! Use /stop to end it first.")
         return
 
-    # Fake game state
-    game_state = {
-        "questions": [
-            "Is your character real?",
-            "Is your character male?",
-            "Is your character from a movie?",
-            "Is your character animated?",
-            "Is your character a superhero?"
-        ],
-        "current": 0,
-        "progression": 0,
-        "guess": {"name": "Iron Man", "description": "Marvel superhero played by Robert Downey Jr."}
-    }
-    active_games[user_id] = game_state
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Start a new game session using free Akinator API
+            async with session.get("https://tnc-akinator-api.vercel.app/start") as resp:
+                data = await resp.json()
+        except Exception as e:
+            await message.reply(f"⚠️ Failed to start game: {e}")
+            return
 
-    q_text = game_state["questions"][game_state["current"]]
-    await message.reply_text(
-        f"🧞‍♂️ Game started! Think of a character, person, or object.\n\n❓ {q_text}",
+    session_id = data.get("session")
+    active_games[user_id] = session_id
+
+    # Send first question
+    await message.reply(
+        "🧞‍♂️ Game started! Think of a character, person, or object.\nI will try to guess it.\n\nYou can stop anytime using /stop.",
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
@@ -79,23 +72,18 @@ async def start_akinator_game(client: Client, message, user_id: int):
                 InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
                 InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
             ],
-            [
-                InlineKeyboardButton("🛑 Stop", callback_data="stop_game")
-            ]
+            [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
         ])
     )
 
-
 # ------------------------------
-# Handle answers
+# Handle answer callbacks
 # ------------------------------
 @Client.on_callback_query(filters.regex(r"^ans_|stop_game"))
-async def answer_handler(client: Client, query: CallbackQuery):
+async def handle_answers(client, query):
     user_id = query.from_user.id
     if user_id not in active_games:
         return await query.answer("❌ You don't have an active game.", show_alert=True)
-
-    game_state = active_games[user_id]
 
     if query.data == "stop_game":
         del active_games[user_id]
@@ -111,36 +99,33 @@ async def answer_handler(client: Client, query: CallbackQuery):
     }
     answer = mapping.get(query.data)
 
-    # Fake progression logic
-    game_state["current"] += 1
-    game_state["progression"] += random.randint(15, 25)
+    session_id = active_games[user_id]
 
-    # Check if game finished
-    if game_state["progression"] >= 80 or game_state["current"] >= len(game_state["questions"]):
-        guess = game_state["guess"]
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(f"https://tnc-akinator-api.vercel.app/answer?session={session_id}&answer={answer}") as resp:
+                data = await resp.json()
+        except Exception as e:
+            del active_games[user_id]
+            return await query.message.edit_text(f"⚠️ Error: {e}")
+
+    progression = data.get("progression", 0)
+    guess = data.get("guess")
+
+    if guess or progression >= 80:
         del active_games[user_id]
-
-        # Update stats as win
         await update_user_stats(user_id, True)
 
-        # Fetch image
-        img_url = await fetch_image_url(guess["name"])
-
-        text = (
-            f"🤯 I think it's **{guess['name']}**!\n"
-            f"🧾 {guess['description']}\n"
-            f"Was I right? (yes / no)"
-        )
-
-        if img_url:
-            await query.message.reply_photo(img_url, caption=text)
+        if guess:
+            text = f"🤯 I think it's **{guess['name']}**!\n🧾 {guess['description']}\nWas I right?"
         else:
-            await query.message.reply(text)
+            text = "🤯 I made a guess!"
+
+        await query.message.edit_text(text)
     else:
-        # Next question
-        next_q = game_state["questions"][game_state["current"]]
+        # Ask next question
         await query.message.edit_text(
-            f"❓ {next_q}",
+            "❓ " + data.get("question", "Next question?"),
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton("✅ Yes", callback_data="ans_yes"),
@@ -150,8 +135,23 @@ async def answer_handler(client: Client, query: CallbackQuery):
                     InlineKeyboardButton("🤔 Probably", callback_data="ans_probably"),
                     InlineKeyboardButton("❓ Don't Know", callback_data="ans_dontknow")
                 ],
-                [
-                    InlineKeyboardButton("🛑 Stop", callback_data="stop_game")
-                ]
+                [InlineKeyboardButton("🛑 Stop", callback_data="stop_game")]
             ])
         )
+
+# ------------------------------
+# Commands
+# ------------------------------
+@Client.on_message(filters.command("play") & filters.private)
+async def cmd_play(client, message):
+    user_id = message.from_user.id
+    await start_akinator_game(client, message, user_id)
+
+@Client.on_message(filters.command("stop") & filters.private)
+async def cmd_stop(client, message):
+    user_id = message.from_user.id
+    if user_id in active_games:
+        del active_games[user_id]
+        await message.reply("🛑 Game stopped. Use /play to start a new game.")
+    else:
+        await message.reply("❌ You don't have an active game.")
