@@ -3,4 +3,4 @@ tgcrypto
 aiohttp
 motor
 python-dotenv
-akinator.py
+akinator.py>=2.0.2
